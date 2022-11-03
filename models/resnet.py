@@ -6,10 +6,12 @@ Reference:
 [1] Kaiming He, Xiangyu Zhang, Shaoqing Ren, Jian Sun
     Deep Residual Learning for Image Recognition. arXiv:1512.03385
 '''
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from models.filter_utils import make_meshgrid, make_gabor_bank, kernels2weights
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -71,13 +73,43 @@ class Bottleneck(nn.Module):
 
 
 class ResNet(nn.Module):
-    def __init__(self, block, num_blocks, num_classes=10):
+    def __init__(self, block, num_blocks, num_classes=10, v1_oripowermap=None):
         super(ResNet, self).__init__()
-        self.in_planes = 64
 
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3,
-                               stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
+        if v1_oripowermap:
+            kernel_size = 7
+            xs, ys = make_meshgrid(sz=kernel_size)
+            phi = (5**0.5 + 1) / 2  # golden ratio
+            freqs = [phi**n for n in range(2, -4, -1)]
+            kernels_complex = (list)(make_gabor_bank(xs, ys, directions=9, freqs=freqs))
+            kernels_real, kernels_imag = np.real(kernels_complex), np.imag(kernels_complex)
+            weights_real, weights_imag = kernels2weights(kernels_real, 3), kernels2weights(kernels_imag, 3),
+            print(f"ResNet: weights_real.shape = {weights_real.shape}")
+
+            self.in_planes = len(kernels_complex)
+
+            # NOTE: these need to be children to make sure they are handled correctly (i.e. assigning to device)
+            self._conv1_real = nn.Conv2d(3, len(kernels_complex), kernel_size=kernel_size, stride=1, padding=3, bias=False)
+            self._conv1_real.weight = torch.nn.Parameter(weights_real)
+            
+            self._conv1_imag = nn.Conv2d(3, len(kernels_complex), kernel_size=kernel_size, stride=1, padding=3, bias=False)
+            self._conv1_imag.weight = torch.nn.Parameter(weights_imag)
+
+            if v1_oripowermap == 'fixed':
+                self._conv1_real.weight.requires_grad = False
+                self._conv1_imag.weight.requires_grad = False
+
+            elif v1_oripowermap == 'init':
+                self._conv1_real.weight.requires_grad = True
+                self._conv1_imag.weight.requires_grad = True
+
+            self.conv1 = lambda x: self._conv1_real(x)**2 + self._conv1_imag(x)**2
+            
+        else:
+            self.in_planes = 64
+            self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=1, padding=1, bias=False)
+
+        self.bn1 = nn.BatchNorm2d(self.in_planes)
         self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
         self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
         self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
@@ -112,8 +144,8 @@ def ResNet34():
     return ResNet(BasicBlock, [3, 4, 6, 3])
 
 
-def ResNet50():
-    return ResNet(Bottleneck, [3, 4, 6, 3])
+def ResNet50(v1_oripowermap):
+    return ResNet(Bottleneck, [3, 4, 6, 3], v1_oripowermap=v1_oripowermap)
 
 
 def ResNet101():
