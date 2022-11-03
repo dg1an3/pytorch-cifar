@@ -44,7 +44,7 @@ def kernels2weights(kernels, in_channels=1, dtype=torch.float32):
     return torch.tensor(kernels, dtype=dtype)
 
 
-def make_oriented_powermap(kernel_size=7, directions=9):
+def make_oriented_map(inplanes=3, kernel_size=7, directions=9, stride=1, dstack_phases=False):
     """_summary_
 
     Args:
@@ -60,32 +60,56 @@ def make_oriented_powermap(kernel_size=7, directions=9):
     kernels_complex = (list)(
         make_gabor_bank(xs, ys, directions=directions, freqs=freqs)
     )
-    kernels_real, kernels_imag = np.real(kernels_complex), np.imag(kernels_complex)
-    weights_real, weights_imag = (
-        kernels2weights(kernels_real, 3),
-        kernels2weights(kernels_imag, 3),
-    )
-    print(f"make_oriented_powermap: weights_real.shape = {weights_real.shape}")
 
-    # NOTE: these need to be children to make sure they are handled correctly (i.e. assigning to device)
-    conv_real = nn.Conv2d(
-        3,
-        len(kernels_complex),
-        kernel_size=kernel_size,
-        stride=1,
-        padding=3,
-        bias=False,
-    )
-    conv_real.weight = torch.nn.Parameter(weights_real)
+    if dstack_phases:
+        #
+        conv = nn.Conv2d(
+            inplanes,
+            len(kernels_complex) * 2,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=3,
+            bias=False,
+        )
 
-    conv_imag = nn.Conv2d(
-        3,
-        len(kernels_complex),
-        kernel_size=kernel_size,
-        stride=1,
-        padding=3,
-        bias=False,
-    )
-    conv_imag.weight = torch.nn.Parameter(weights_imag)
+        stacked_weights = np.concatenate((np.real(kernels_complex), np.imag(kernels_complex)), axis=0)
+        print(f"stacked_weights.shape = {stacked_weights.shape}")
 
-    return len(kernels_complex), conv_real, conv_imag
+        conv.weight = torch.nn.Parameter(
+            kernels2weights(
+                stacked_weights,
+                inplanes
+            )
+        )
+
+        return len(kernels_complex) * 2, conv
+    else:
+        #
+        kernels_real, kernels_imag = np.real(kernels_complex), np.imag(kernels_complex)
+        weights_real, weights_imag = (
+            kernels2weights(kernels_real, inplanes),
+            kernels2weights(kernels_imag, inplanes),
+        )
+        print(f"make_oriented_map: weights_real.shape = {weights_real.shape}")
+
+        conv_real = nn.Conv2d(
+            inplanes,
+            len(kernels_complex),
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=3,
+            bias=False,
+        )
+        conv_real.weight = torch.nn.Parameter(weights_real)
+
+        conv_imag = nn.Conv2d(
+            inplanes,
+            len(kernels_complex),
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=3,
+            bias=False,
+        )
+        conv_imag.weight = torch.nn.Parameter(weights_imag)
+
+        return len(kernels_complex), conv_real, conv_imag

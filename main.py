@@ -72,8 +72,8 @@ print("==> Building model..")
 # net = VGG('VGG19')
 # net = ResNet18()
 # net = ResNet34()
-# net = ResNet50(use_oriented_powermap='init')
-net = ResNet101(use_oriented_powermap="init")
+# net = ResNet50(use_oriented_maps='init')
+net = ResNet101(use_oriented_maps="init")
 # net = PreActResNet18()
 # net = GoogLeNet()
 # net = DenseNet121()
@@ -91,6 +91,7 @@ net = net.to(device)
 if device == "cuda":
     net = torch.nn.DataParallel(net)
     cudnn.benchmark = True
+
 
 if args.resume:
     # Load checkpoint.
