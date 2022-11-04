@@ -72,8 +72,14 @@ print("==> Building model..")
 # net = VGG('VGG19')
 # net = ResNet18()
 # net = ResNet34()
-# net = ResNet50(use_oriented_maps='init')
-net = ResNet101(use_oriented_maps="init")
+# net = ResNet50(
+#     use_oriented_maps='init',
+#     use_depthwise_maxpool=False
+# )
+net = ResNet101(
+    use_oriented_maps="init", 
+    use_depthwise_maxpool=False
+)
 # net = PreActResNet18()
 # net = GoogLeNet()
 # net = DenseNet121()
