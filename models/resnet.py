@@ -59,7 +59,7 @@ class Bottleneck(nn.Module):
         in_planes,
         planes,
         stride=1,
-        use_oriented_phasemap=None,
+        use_oriented_maps=None,
         use_depthwise_maxpool=False,
     ):
         super(Bottleneck, self).__init__()
@@ -87,8 +87,8 @@ class Bottleneck(nn.Module):
 
         self.bn1 = nn.BatchNorm2d(planes)
 
-        # TODO: allow for either phase map or power map
-        if use_oriented_phasemap:
+        # allow for either phase map or power map
+        if "power-bottleneck" in use_oriented_maps:
 
             conv2_planes_out, self._conv2_real, self._conv2_imag = make_oriented_map(
                 inplanes=planes,
@@ -100,7 +100,18 @@ class Bottleneck(nn.Module):
 
             self.conv2 = lambda x: self._conv2_real(x) ** 2 + self._conv2_imag(x) ** 2
 
+        elif "phase-bottleneck" in use_oriented_maps:
+
+            conv2_planes_out, self.conv2 = make_oriented_map(
+                inplanes=planes,
+                kernel_size=7,
+                directions=9,
+                stride=stride,
+                dstack_phases=True,
+            )
+
         else:
+
             self.conv2 = nn.Conv2d(
                 planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
             )
@@ -130,7 +141,7 @@ class Bottleneck(nn.Module):
         self.conv2.weight.requires_grad = train
 
     def forward(self, x):
-        out = self.maxpool1(x) if hasattr(self, 'maxpool1') else self.conv1(x)
+        out = self.maxpool1(x) if hasattr(self, "maxpool1") else self.conv1(x)
         out = F.relu(self.bn1(out))
         out = F.relu(self.bn2(self.conv2(out)))
         out = self.bn3(self.conv3(out))
@@ -146,7 +157,7 @@ class ResNet(nn.Module):
         num_blocks,
         num_classes=10,
         use_oriented_maps: Union[str, None] = None,
-        use_depthwise_maxpool=False,
+        **kwargs
     ):
         """_summary_
 
@@ -159,13 +170,19 @@ class ResNet(nn.Module):
         super(ResNet, self).__init__()
 
         # set up the initial v1 processing
-        if use_oriented_maps:
+        if "power-v1" in use_oriented_maps:
 
             self.in_planes, self._conv1_real, self._conv1_imag = make_oriented_map(
                 inplanes=3, kernel_size=7, directions=9, stride=1
             )
 
             self.conv1 = lambda x: self._conv1_real(x) ** 2 + self._conv1_imag(x) ** 2
+
+        elif "phase-v1" in use_oriented_maps:
+
+            self.in_planes, self.conv1 = make_oriented_map(
+                inplanes=3, kernel_size=7, directions=9, stride=1, dstack_phases=True
+            )
 
         else:
 
@@ -183,37 +200,37 @@ class ResNet(nn.Module):
             64,
             num_blocks[0],
             stride=1,
-            use_oriented_phasemap=use_oriented_maps,
-            use_depthwise_maxpool=use_depthwise_maxpool,
+            use_oriented_maps=use_oriented_maps,
+            **kwargs,
         )
         self.layer2 = self._make_layer(
             block,
             128,
             num_blocks[1],
             stride=2,
-            use_oriented_phasemap=use_oriented_maps,
-            use_depthwise_maxpool=use_depthwise_maxpool,
+            use_oriented_maps=use_oriented_maps,
+            **kwargs,
         )
         self.layer3 = self._make_layer(
             block,
             256,
             num_blocks[2],
             stride=2,
-            use_oriented_phasemap=use_oriented_maps,
-            use_depthwise_maxpool=use_depthwise_maxpool,
+            use_oriented_maps=use_oriented_maps,
+            **kwargs,
         )
         self.layer4 = self._make_layer(
             block,
             512,
             num_blocks[3],
             stride=2,
-            use_oriented_phasemap=use_oriented_maps,
-            use_depthwise_maxpool=use_depthwise_maxpool,
+            use_oriented_maps=use_oriented_maps,
+            **kwargs,
         )
         self.linear = nn.Linear(512 * block.expansion, num_classes)
 
         # if the use_oriented_maps parameter is 'init' then we should set to train
-        self.train_oriented_maps(use_oriented_maps == "init")
+        self.train_oriented_maps("init" in use_oriented_maps)
 
     def train_oriented_maps(self, train=False):
         """_summary_
@@ -221,36 +238,23 @@ class ResNet(nn.Module):
         Args:
             train (bool, optional): _description_. Defaults to False.
         """
-        self._conv1_real.weight.requires_grad = train
-        self._conv1_imag.weight.requires_grad = train
+        if hasattr(self, "_conv1_real"):
+            self._conv1_real.weight.requires_grad = train
+            self._conv1_imag.weight.requires_grad = train
+        else:
+            self.conv1.requires_grad = train
 
         # recursively set train_oriented_maps
         for child in self.children():
             if hasattr(child, "train_oriented_maps"):
                 child.train_oriented_maps(train)
 
-    def _make_layer(
-        self,
-        block,
-        planes,
-        num_blocks,
-        stride,
-        use_oriented_phasemap,
-        use_depthwise_maxpool,
-    ):
+    def _make_layer(self, block, planes, num_blocks, stride, **kwargs):
         """ """
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for stride in strides:
-            layers.append(
-                block(
-                    self.in_planes,
-                    planes,
-                    stride,
-                    use_oriented_phasemap=use_oriented_phasemap,
-                    use_depthwise_maxpool=use_depthwise_maxpool,
-                )
-            )
+            layers.append(block(self.in_planes, planes, stride, **kwargs))
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
@@ -274,13 +278,8 @@ def ResNet34():
     return ResNet(BasicBlock, [3, 4, 6, 3])
 
 
-def ResNet50(use_oriented_maps=True, use_depthwise_maxpool=False):
-    return ResNet(
-        Bottleneck,
-        [3, 4, 6, 3],
-        use_oriented_maps=use_oriented_maps,
-        use_depthwise_maxpool=use_depthwise_maxpool,
-    )
+def ResNet50(**kwargs):
+    return ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
 
 
 def ResNet101(use_oriented_maps=True, use_depthwise_maxpool=False):

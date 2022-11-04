@@ -73,7 +73,7 @@ print("==> Building model..")
 # model = ResNet18()
 # model = ResNet34()
 model = ResNet50(
-    use_oriented_maps='fixed',
+    use_oriented_maps='fixed power-v1 phase-bottleneck',
     use_depthwise_maxpool=False
 )
 # model = ResNet101(
