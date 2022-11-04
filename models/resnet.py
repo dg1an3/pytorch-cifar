@@ -54,19 +54,51 @@ class BasicBlock(nn.Module):
 class Bottleneck(nn.Module):
     expansion = 4
 
-    def __init__(self, in_planes, planes, stride=1, use_oriented_phasemap=None):
+    def __init__(
+        self,
+        in_planes,
+        planes,
+        stride=1,
+        use_oriented_phasemap=None,
+        use_depthwise_maxpool=False,
+    ):
         super(Bottleneck, self).__init__()
-        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, bias=False)
+
+        if use_depthwise_maxpool:
+            self.maxpool1 = nn.Sequential(
+                # use this for depth-wise max pooling
+                nn.Unflatten(1, torch.Size([1, in_planes])),
+                nn.MaxPool3d(
+                    kernel_size=(5, 1, 1), stride=(4, 1, 1), padding=(1, 0, 0)
+                ),
+                nn.Flatten(start_dim=1, end_dim=2),
+                nn.Conv2d(
+                    in_planes // 4,
+                    planes,
+                    kernel_size=1,
+                    stride=1,
+                    bias=False,
+                ),
+            )
+        else:
+            self.conv1 = nn.Conv2d(
+                in_planes, planes, kernel_size=1, stride=1, bias=False
+            )
+
         self.bn1 = nn.BatchNorm2d(planes)
+
+        # TODO: allow for either phase map or power map
         if use_oriented_phasemap:
 
-            conv2_planes_out, self.conv2 = make_oriented_map(
+            conv2_planes_out, self._conv2_real, self._conv2_imag = make_oriented_map(
                 inplanes=planes,
-                kernel_size=7, 
-                directions=9, 
+                kernel_size=7,
+                directions=9,
                 stride=stride,
-                dstack_phases=True
+                dstack_phases=False,
             )
+
+            self.conv2 = lambda x: self._conv2_real(x) ** 2 + self._conv2_imag(x) ** 2
 
         else:
             self.conv2 = nn.Conv2d(
@@ -82,6 +114,7 @@ class Bottleneck(nn.Module):
 
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != self.expansion * planes:
+            assert stride <= 2
             self.shortcut = nn.Sequential(
                 nn.Conv2d(
                     in_planes,
@@ -97,19 +130,23 @@ class Bottleneck(nn.Module):
         self.conv2.weight.requires_grad = train
 
     def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.maxpool1(x) if hasattr(self, 'maxpool1') else self.conv1(x)
+        out = F.relu(self.bn1(out))
         out = F.relu(self.bn2(self.conv2(out)))
         out = self.bn3(self.conv3(out))
-        shortcut_x = self.shortcut(x)
-        # print(f"{out.shape} vs {x_shortcut.shape}")
-        out += shortcut_x
+        out += self.shortcut(x)
         out = F.relu(out)
         return out
 
 
 class ResNet(nn.Module):
     def __init__(
-        self, block, num_blocks, num_classes=10, use_oriented_maps=Union[str, None]
+        self,
+        block,
+        num_blocks,
+        num_classes=10,
+        use_oriented_maps: Union[str, None] = None,
+        use_depthwise_maxpool=False,
     ):
         """_summary_
 
@@ -121,13 +158,11 @@ class ResNet(nn.Module):
         """
         super(ResNet, self).__init__()
 
+        # set up the initial v1 processing
         if use_oriented_maps:
 
             self.in_planes, self._conv1_real, self._conv1_imag = make_oriented_map(
-                inplanes=3,
-                kernel_size=7, 
-                directions=9,
-                stride=1
+                inplanes=3, kernel_size=7, directions=9, stride=1
             )
 
             self.conv1 = lambda x: self._conv1_real(x) ** 2 + self._conv1_imag(x) ** 2
@@ -149,6 +184,7 @@ class ResNet(nn.Module):
             num_blocks[0],
             stride=1,
             use_oriented_phasemap=use_oriented_maps,
+            use_depthwise_maxpool=use_depthwise_maxpool,
         )
         self.layer2 = self._make_layer(
             block,
@@ -156,6 +192,7 @@ class ResNet(nn.Module):
             num_blocks[1],
             stride=2,
             use_oriented_phasemap=use_oriented_maps,
+            use_depthwise_maxpool=use_depthwise_maxpool,
         )
         self.layer3 = self._make_layer(
             block,
@@ -163,6 +200,7 @@ class ResNet(nn.Module):
             num_blocks[2],
             stride=2,
             use_oriented_phasemap=use_oriented_maps,
+            use_depthwise_maxpool=use_depthwise_maxpool,
         )
         self.layer4 = self._make_layer(
             block,
@@ -170,6 +208,7 @@ class ResNet(nn.Module):
             num_blocks[3],
             stride=2,
             use_oriented_phasemap=use_oriented_maps,
+            use_depthwise_maxpool=use_depthwise_maxpool,
         )
         self.linear = nn.Linear(512 * block.expansion, num_classes)
 
@@ -190,7 +229,15 @@ class ResNet(nn.Module):
             if hasattr(child, "train_oriented_maps"):
                 child.train_oriented_maps(train)
 
-    def _make_layer(self, block, planes, num_blocks, stride, use_oriented_phasemap):
+    def _make_layer(
+        self,
+        block,
+        planes,
+        num_blocks,
+        stride,
+        use_oriented_phasemap,
+        use_depthwise_maxpool,
+    ):
         """ """
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
@@ -201,6 +248,7 @@ class ResNet(nn.Module):
                     planes,
                     stride,
                     use_oriented_phasemap=use_oriented_phasemap,
+                    use_depthwise_maxpool=use_depthwise_maxpool,
                 )
             )
             self.in_planes = planes * block.expansion
@@ -226,16 +274,31 @@ def ResNet34():
     return ResNet(BasicBlock, [3, 4, 6, 3])
 
 
-def ResNet50(use_oriented_maps=True):
-    return ResNet(Bottleneck, [3, 4, 6, 3], use_oriented_maps=use_oriented_maps)
+def ResNet50(use_oriented_maps=True, use_depthwise_maxpool=False):
+    return ResNet(
+        Bottleneck,
+        [3, 4, 6, 3],
+        use_oriented_maps=use_oriented_maps,
+        use_depthwise_maxpool=use_depthwise_maxpool,
+    )
 
 
-def ResNet101(use_oriented_maps=True):
-    return ResNet(Bottleneck, [3, 4, 23, 3], use_oriented_maps=use_oriented_maps)
+def ResNet101(use_oriented_maps=True, use_depthwise_maxpool=False):
+    return ResNet(
+        Bottleneck,
+        [3, 4, 23, 3],
+        use_oriented_maps=use_oriented_maps,
+        use_depthwise_maxpool=use_depthwise_maxpool,
+    )
 
 
-def ResNet152(use_oriented_maps=True):
-    return ResNet(Bottleneck, [3, 8, 36, 3], use_oriented_maps=use_oriented_maps)
+def ResNet152(use_oriented_maps=True, use_depthwise_maxpool=False):
+    return ResNet(
+        Bottleneck,
+        [3, 8, 36, 3],
+        use_oriented_maps=use_oriented_maps,
+        use_depthwise_maxpool=use_depthwise_maxpool,
+    )
 
 
 def test():
