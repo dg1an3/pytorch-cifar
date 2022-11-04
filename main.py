@@ -69,19 +69,19 @@ classes = (
 
 # Model
 print("==> Building model..")
-# net = VGG('VGG19')
-# net = ResNet18()
-# net = ResNet34()
-# net = ResNet50(
-#     use_oriented_maps='init',
-#     use_depthwise_maxpool=False
-# )
-net = ResNet101(
-    use_oriented_maps="init", 
+# model = VGG('VGG19')
+# model = ResNet18()
+# model = ResNet34()
+model = ResNet50(
+    use_oriented_maps='fixed',
     use_depthwise_maxpool=False
 )
-# net = PreActResNet18()
-# net = GoogLeNet()
+# model = ResNet101(
+#     use_oriented_maps="init", 
+#     use_depthwise_maxpool=False
+# )
+# model = PreActResNet18()
+# model = GoogLeNet()
 # net = DenseNet121()
 # net = ResNeXt29_2x64d()
 # net = MobileNet()
@@ -93,10 +93,12 @@ net = ResNet101(
 # net = EfficientNetB0()
 # net = RegNetX_200MF()
 # net = SimpleDLA()
-net = net.to(device)
+model = model.to(device)
 if device == "cuda":
-    net = torch.nn.DataParallel(net)
+    net = torch.nn.DataParallel(model)
     cudnn.benchmark = True
+else:
+    net = model
 
 
 if args.resume:
@@ -188,7 +190,16 @@ def test(epoch):
         best_acc = acc
 
 
-for epoch in range(start_epoch, start_epoch + 200):
+model.train_oriented_maps(False)
+
+for epoch in range(start_epoch, start_epoch + 50):
+    train(epoch)
+    test(epoch)
+    scheduler.step()
+
+model.train_oriented_maps(True)
+
+for epoch in range(start_epoch + 50, start_epoch + 100):
     train(epoch)
     test(epoch)
     scheduler.step()
