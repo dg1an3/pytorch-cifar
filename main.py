@@ -73,7 +73,9 @@ print("==> Building model..")
 # model = ResNet18()
 # model = ResNet34()
 model = ResNet50(
-    use_oriented_maps='fixed power-v1 phase-bottleneck',
+    use_oriented_maps_v1='power',
+    use_oriented_maps_bottleneck='phase',
+    # trainable_oriented_maps=False,
     use_depthwise_maxpool=False
 )
 # model = ResNet101(
@@ -188,7 +190,6 @@ def test(epoch):
             os.mkdir("checkpoint")
         torch.save(state, "./checkpoint/ckpt.pth")
         best_acc = acc
-
 
 model.train_oriented_maps(False)
 
