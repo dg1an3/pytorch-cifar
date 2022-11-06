@@ -61,6 +61,7 @@ class Bottleneck(nn.Module):
         stride=1,
         use_oriented_maps_bottleneck: Union[str, None] = None,
         use_depthwise_maxpool: bool = False,
+        use_maxpool_shortcut: bool = False,
     ):
         super(Bottleneck, self).__init__()
 
@@ -69,7 +70,7 @@ class Bottleneck(nn.Module):
                 # use this for depth-wise max pooling
                 nn.Unflatten(1, torch.Size([1, in_planes])),
                 nn.MaxPool3d(
-                    kernel_size=(5, 1, 1), stride=(4, 1, 1), padding=(1, 0, 0)
+                    kernel_size=(5, 1, 1), stride=(4, stride, stride), padding=(1, 0, 0)
                 ),
                 nn.Flatten(start_dim=1, end_dim=2),
                 nn.Conv2d(
@@ -80,9 +81,10 @@ class Bottleneck(nn.Module):
                     bias=False,
                 ),
             )
+            # assert False
         else:
             self.conv1 = nn.Conv2d(
-                in_planes, planes, kernel_size=1, stride=1, bias=False
+                in_planes, planes, kernel_size=1, stride=stride, bias=False
             )
 
         self.bn1 = nn.BatchNorm2d(planes)
@@ -94,7 +96,7 @@ class Bottleneck(nn.Module):
                 inplanes=planes,
                 kernel_size=7,
                 directions=9,
-                stride=stride,
+                stride=1,
                 dstack_phases=False,
             )
 
@@ -106,14 +108,14 @@ class Bottleneck(nn.Module):
                 inplanes=planes,
                 kernel_size=7,
                 directions=9,
-                stride=stride,
+                stride=1,
                 dstack_phases=True,
             )
 
         else:
 
             self.conv2 = nn.Conv2d(
-                planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
+                planes, planes, kernel_size=3, stride=1, padding=1, bias=False
             )
             conv2_planes_out = planes
 
@@ -127,11 +129,15 @@ class Bottleneck(nn.Module):
         if stride != 1 or in_planes != self.expansion * planes:
             assert stride <= 2
             self.shortcut = nn.Sequential(
+                # use a MaxPool2d downsampler
+                nn.MaxPool2d(kernel_size=3, stride=stride, padding=1)
+                if use_maxpool_shortcut
+                else nn.Identity(),
                 nn.Conv2d(
                     in_planes,
                     self.expansion * planes,
                     kernel_size=1,
-                    stride=stride,
+                    stride=1 if use_maxpool_shortcut else stride,
                     bias=False,
                 ),
                 nn.BatchNorm2d(self.expansion * planes),
@@ -149,7 +155,9 @@ class Bottleneck(nn.Module):
         out = F.relu(self.bn1(out))
         out = F.relu(self.bn2(self.conv2(out)))
         out = self.bn3(self.conv3(out))
-        out += self.shortcut(x)
+        shortcut_x = self.shortcut(x)
+        # print(f"{shortcut_x.shape} vs. {out.shape}")
+        out += shortcut_x
         out = F.relu(out)
         return out
 
@@ -239,16 +247,23 @@ class ResNet(nn.Module):
         Args:
             train (bool, optional): _description_. Defaults to False.
         """
-        if hasattr(self, "_conv1_real"):
-            self._conv1_real.weight.requires_grad = train
-            self._conv1_imag.weight.requires_grad = train
-        else:
-            self.conv1.requires_grad = train
+        # TODO: remove this, as we will never train the ori power map
+        # if hasattr(self, "_conv1_real"):
+        #    self._conv1_real.weight.requires_grad = train
+        #    self._conv1_imag.weight.requires_grad = train
+        # else:
+        #    self.conv1.requires_grad = train
 
         # recursively set train_oriented_maps
         for child in self.children():
+            print(type(child))
             if hasattr(child, "train_oriented_maps"):
                 child.train_oriented_maps(train)
+            if isinstance(child, nn.Sequential):
+                for grandchild in child.modules():
+                    print(type(grandchild))
+                    if hasattr(grandchild, "train_oriented_maps"):
+                        grandchild.train_oriented_maps(train)
 
     def _make_layer(self, block, planes, num_blocks, stride, **kwargs):
         """ """

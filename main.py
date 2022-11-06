@@ -73,13 +73,12 @@ print("==> Building model..")
 # model = ResNet18()
 # model = ResNet34()
 model = ResNet50(
-    use_oriented_maps_v1='power',
-    use_oriented_maps_bottleneck='phase',
-    # trainable_oriented_maps=False,
-    use_depthwise_maxpool=False
+    use_oriented_maps_v1="power",
+    use_oriented_maps_bottleneck="phase",
+    use_depthwise_maxpool=True,
 )
 # model = ResNet101(
-#     use_oriented_maps="init", 
+#     use_oriented_maps="init",
 #     use_depthwise_maxpool=False
 # )
 # model = PreActResNet18()
@@ -95,12 +94,19 @@ model = ResNet50(
 # net = EfficientNetB0()
 # net = RegNetX_200MF()
 # net = SimpleDLA()
+
 model = model.to(device)
 if device == "cuda":
     net = torch.nn.DataParallel(model)
     cudnn.benchmark = True
 else:
     net = model
+
+model.train_oriented_maps(False)
+
+# check that the kernels are not trainable
+for p in model.parameters():
+    print(f"{p.requires_grad} {p.data.shape}")
 
 
 if args.resume:
@@ -191,16 +197,20 @@ def test(epoch):
         torch.save(state, "./checkpoint/ckpt.pth")
         best_acc = acc
 
-model.train_oriented_maps(False)
 
-for epoch in range(start_epoch, start_epoch + 50):
+for epoch in range(start_epoch, start_epoch + 100):
     train(epoch)
     test(epoch)
     scheduler.step()
 
-model.train_oriented_maps(True)
+post_train = False
+if post_train:
+    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
-for epoch in range(start_epoch + 50, start_epoch + 100):
-    train(epoch)
-    test(epoch)
-    scheduler.step()
+    model.train_oriented_maps(True)
+
+    for epoch in range(start_epoch + 100, start_epoch + 200):
+        train(epoch)
+        test(epoch)
+        scheduler.step()
