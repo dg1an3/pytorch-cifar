@@ -8,6 +8,9 @@ import torch.backends.cudnn as cudnn
 import torchvision
 import torchvision.transforms as transforms
 
+import cv2
+import PIL
+
 import os
 import argparse
 
@@ -16,7 +19,7 @@ from utils import progress_bar
 
 
 parser = argparse.ArgumentParser(description="PyTorch CIFAR10 Training")
-parser.add_argument("--lr", default=0.1, type=float, help="learning rate")
+parser.add_argument("--lr", default=0.01, type=float, help="learning rate")
 parser.add_argument(
     "--resume", "-r", action="store_true", help="resume from checkpoint"
 )
@@ -26,6 +29,16 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 best_acc = 0  # best test accuracy
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
+def convertColor(img):
+    # print(type(img))
+    # print(img.shape)
+    img = img.numpy()
+    img = np.moveaxis(img,0,-1)
+    # print(img.shape)
+    ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCR_CB)
+    ycrcb = np.moveaxis(ycrcb,-1,0)
+    return torch.tensor(ycrcb)
+
 # Data
 print("==> Preparing data..")
 transform_train = transforms.Compose(
@@ -33,54 +46,68 @@ transform_train = transforms.Compose(
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        transforms.Lambda(convertColor),
+        transforms.Normalize((0.4082, 0.4780, 0.5170), (0.2819, 0.0638, 0.0702)),
     ]
 )
 
 transform_test = transforms.Compose(
     [
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        transforms.Lambda(convertColor),
+        transforms.Normalize((0.4082, 0.4780, 0.5170), (0.2819, 0.0638, 0.0702)),
     ]
 )
 
-trainset = torchvision.datasets.CIFAR10(
+trainset = torchvision.datasets.CIFAR100(
     root="./data", train=True, download=True, transform=transform_train
 )
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=256, shuffle=True)
 
-testset = torchvision.datasets.CIFAR10(
+# train_imgs = [img for batch, (img, labels) in enumerate(trainloader)]
+# train_imgs = np.concatenate(train_imgs)
+# train_imgs = np.moveaxis(train_imgs, 1,-1)
+# train_imgs = np.reshape(train_imgs, (train_imgs.shape[0]*train_imgs.shape[1]*train_imgs.shape[2],train_imgs.shape[3]))
+# print(train_imgs.shape)
+# print(np.mean(train_imgs[:,0]), np.mean(train_imgs[:,1]), np.mean(train_imgs[:,2]))
+# print(np.std(train_imgs[:,0]), np.std(train_imgs[:,1]), np.std(train_imgs[:,2]))
+
+
+testset = torchvision.datasets.CIFAR100(
     root="./data", train=False, download=True, transform=transform_test
 )
 testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False)
 
-classes = (
-    "plane",
-    "car",
-    "bird",
-    "cat",
-    "deer",
-    "dog",
-    "frog",
-    "horse",
-    "ship",
-    "truck",
-)
+# classes = (
+#     "plane",
+#     "car",
+#     "bird",
+#     "cat",
+#     "deer",
+#     "dog",
+#     "frog",
+#     "horse",
+#     "ship",
+#     "truck",
+# )
 
 # Model
 print("==> Building model..")
 # model = VGG('VGG19')
 # model = ResNet18()
 # model = ResNet34()
-model = ResNet50(
-    use_oriented_maps_v1="power",
-    use_oriented_maps_bottleneck="phase",
-    use_depthwise_maxpool=True,
+#model = ResNet50(
+#    num_classes = 100,
+#    use_oriented_maps_v1="power",
+#    use_oriented_maps_bottleneck="phase",
+#    use_depthwise_maxpool=True,
+#)
+model = ResNet101(    
+    num_classes = 100,
+    use_oriented_maps_v1="power", # "power",
+    use_oriented_maps_bottleneck="", # "phase",
+    use_depthwise_maxpool=False,
 )
-# model = ResNet101(
-#     use_oriented_maps="init",
-#     use_depthwise_maxpool=False
-# )
 # model = PreActResNet18()
 # model = GoogLeNet()
 # net = DenseNet121()
@@ -102,7 +129,7 @@ if device == "cuda":
 else:
     net = model
 
-model.train_oriented_maps(False)
+model.train_oriented_maps(True)
 
 # check that the kernels are not trainable
 for p in model.parameters():
