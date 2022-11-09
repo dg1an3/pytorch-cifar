@@ -8,6 +8,7 @@ import torch.backends.cudnn as cudnn
 import torchvision
 import torchvision.transforms as transforms
 
+from sklearn.manifold import TSNE
 import cv2
 import PIL
 
@@ -19,7 +20,7 @@ from utils import progress_bar
 
 
 parser = argparse.ArgumentParser(description="PyTorch CIFAR10 Training")
-parser.add_argument("--lr", default=0.01, type=float, help="learning rate")
+parser.add_argument("--lr", default=0.1, type=float, help="learning rate")
 parser.add_argument(
     "--resume", "-r", action="store_true", help="resume from checkpoint"
 )
@@ -29,15 +30,16 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 best_acc = 0  # best test accuracy
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
+
 def convertColor(img):
-    # print(type(img))
-    # print(img.shape)
+    # print(type(img), img.shape)
     img = img.numpy()
-    img = np.moveaxis(img,0,-1)
+    img = np.moveaxis(img, 0, -1)
     # print(img.shape)
     ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCR_CB)
-    ycrcb = np.moveaxis(ycrcb,-1,0)
+    ycrcb = np.moveaxis(ycrcb, -1, 0)
     return torch.tensor(ycrcb)
+
 
 # Data
 print("==> Preparing data..")
@@ -59,24 +61,39 @@ transform_test = transforms.Compose(
     ]
 )
 
-trainset = torchvision.datasets.CIFAR100(
+num_classes = 10
+dataset_to_use = torchvision.datasets.CIFAR10 if num_classes == 10 else torchvision.datasets.CIFAR100
+
+trainset = dataset_to_use(
     root="./data", train=True, download=True, transform=transform_train
 )
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=256, shuffle=True)
 
-# train_imgs = [img for batch, (img, labels) in enumerate(trainloader)]
-# train_imgs = np.concatenate(train_imgs)
-# train_imgs = np.moveaxis(train_imgs, 1,-1)
-# train_imgs = np.reshape(train_imgs, (train_imgs.shape[0]*train_imgs.shape[1]*train_imgs.shape[2],train_imgs.shape[3]))
-# print(train_imgs.shape)
-# print(np.mean(train_imgs[:,0]), np.mean(train_imgs[:,1]), np.mean(train_imgs[:,2]))
-# print(np.std(train_imgs[:,0]), np.std(train_imgs[:,1]), np.std(train_imgs[:,2]))
+
+def calculate_whiten():
+    train_imgs = [img for batch, (img, labels) in enumerate(trainloader)]
+    train_imgs = np.concatenate(train_imgs)
+    train_imgs = np.moveaxis(train_imgs, 1, -1)
+    train_imgs = np.reshape(
+        train_imgs,
+        (
+            train_imgs.shape[0] * train_imgs.shape[1] * train_imgs.shape[2],
+            train_imgs.shape[3],
+        ),
+    )
+    print(train_imgs.shape)
+    print(
+        np.mean(train_imgs[:, 0]), np.mean(train_imgs[:, 1]), np.mean(train_imgs[:, 2])
+    )
+    print(np.std(train_imgs[:, 0]), np.std(train_imgs[:, 1]), np.std(train_imgs[:, 2]))
 
 
-testset = torchvision.datasets.CIFAR100(
+testset = dataset_to_use(
     root="./data", train=False, download=True, transform=transform_test
 )
-testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False)
+print(f"{testset.data.shape} test data shape")
+
+testloader = torch.utils.data.DataLoader(testset, batch_size=256, shuffle=False)
 
 # classes = (
 #     "plane",
@@ -96,19 +113,21 @@ print("==> Building model..")
 # model = VGG('VGG19')
 # model = ResNet18()
 # model = ResNet34()
-#model = ResNet50(
-#    num_classes = 100,
-#    use_oriented_maps_v1="power",
-#    use_oriented_maps_bottleneck="phase",
-#    use_depthwise_maxpool=True,
-#)
-model = ResNet101(    
-    num_classes = 100,
-    use_oriented_maps_v1="power", # "power",
-    use_oriented_maps_bottleneck="", # "phase",
-    use_depthwise_maxpool=False,
+model = ResNet50(
+    num_classes=num_classes,
+    use_oriented_maps_v1="power",
+    oriented_maps_v1_kernel_size=11,
+    use_oriented_maps_bottleneck="phase",
+    oriented_maps_bottleneck_kernel_size=11,
+    use_depthwise_maxpool=True,
 )
-# model = PreActResNet18()
+# model = ResNet101(
+#     num_classes=num_classes,
+#     use_oriented_maps_v1="power",  # "power",
+#     use_oriented_maps_bottleneck="phase",  # "phase",
+#     use_depthwise_maxpool=True,
+# )
+# # model = PreActResNet18()
 # model = GoogLeNet()
 # net = DenseNet121()
 # net = ResNeXt29_2x64d()
@@ -129,11 +148,43 @@ if device == "cuda":
 else:
     net = model
 
-model.train_oriented_maps(True)
+
+model.train_oriented_maps(False)
 
 # check that the kernels are not trainable
 for p in model.parameters():
     print(f"{p.requires_grad} {p.data.shape}")
+
+
+def plot_test_tsne(testloader:torch.utils.data.DataLoader):
+    with torch.no_grad():    
+        outputs = [
+            net(inputs.to(device)).cpu().numpy()
+            for _, (inputs, _) in enumerate(testloader)
+        ]
+        outputs = np.concatenate(outputs)
+
+    # create tsne projector
+    tsne = TSNE(
+        n_components=2,
+        perplexity=num_classes*2,
+        early_exaggeration=1,
+        metric="cosine",
+        learning_rate="auto",
+        init="random",
+        n_iter=1000,
+        verbose=3,
+    )
+
+    projected_outputs = tsne.fit_transform(outputs)
+
+    return projected_outputs
+
+# try out the plotting
+test_images = testset.data
+projected_outputs = plot_test_tsne(testloader)
+print(f"{projected_outputs.shape} {test_images.shape}")
+
 
 
 if args.resume:
@@ -228,7 +279,11 @@ def test(epoch):
 for epoch in range(start_epoch, start_epoch + 100):
     train(epoch)
     test(epoch)
+    outputs = plot_test_tsne(testset)
+    print(f"{outputs.shape} shape")
+
     scheduler.step()
+
 
 post_train = False
 if post_train:
