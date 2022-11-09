@@ -44,7 +44,13 @@ def kernels2weights(kernels, in_channels=1, dtype=torch.float32):
     return torch.tensor(kernels, dtype=dtype)
 
 
-def make_oriented_map(inplanes=3, kernel_size=7, directions=9, stride=1, dstack_phases=False):
+def make_oriented_map(
+    inplanes: int = 3,
+    kernel_size: int = 7,
+    directions: int = 9,
+    stride: int = 1,
+    dstack_phases: bool = False,
+):
     """_summary_
 
     Args:
@@ -68,19 +74,16 @@ def make_oriented_map(inplanes=3, kernel_size=7, directions=9, stride=1, dstack_
             len(kernels_complex) * 2,
             kernel_size=kernel_size,
             stride=stride,
-            padding=3,
+            padding=kernel_size//2,
             bias=False,
         )
 
-        stacked_weights = np.concatenate((np.real(kernels_complex), np.imag(kernels_complex)), axis=0)
+        stacked_weights = np.concatenate(
+            (np.real(kernels_complex), np.imag(kernels_complex)), axis=0
+        )
         print(f"stacked_weights.shape = {stacked_weights.shape}")
 
-        conv.weight = torch.nn.Parameter(
-            kernels2weights(
-                stacked_weights,
-                inplanes
-            )
-        )
+        conv.weight = torch.nn.Parameter(kernels2weights(stacked_weights, inplanes))
 
         return len(kernels_complex) * 2, conv
     else:
@@ -97,7 +100,7 @@ def make_oriented_map(inplanes=3, kernel_size=7, directions=9, stride=1, dstack_
             len(kernels_complex),
             kernel_size=kernel_size,
             stride=stride,
-            padding=3,
+            padding=kernel_size//2,
             bias=False,
         )
         conv_real.weight = torch.nn.Parameter(weights_real)
@@ -107,7 +110,7 @@ def make_oriented_map(inplanes=3, kernel_size=7, directions=9, stride=1, dstack_
             len(kernels_complex),
             kernel_size=kernel_size,
             stride=stride,
-            padding=3,
+            padding=kernel_size//2,
             bias=False,
         )
         conv_imag.weight = torch.nn.Parameter(weights_imag)

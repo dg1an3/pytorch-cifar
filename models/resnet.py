@@ -60,6 +60,7 @@ class Bottleneck(nn.Module):
         planes,
         stride=1,
         use_oriented_maps_bottleneck: Union[str, None] = None,
+        oriented_maps_bottleneck_kernel_size: int = 7,
         use_depthwise_maxpool: bool = False,
         use_maxpool_shortcut: bool = False,
     ):
@@ -94,7 +95,7 @@ class Bottleneck(nn.Module):
 
             conv2_planes_out, self._conv2_real, self._conv2_imag = make_oriented_map(
                 inplanes=planes,
-                kernel_size=7,
+                kernel_size=oriented_maps_bottleneck_kernel_size,
                 directions=9,
                 stride=1,
                 dstack_phases=False,
@@ -106,7 +107,7 @@ class Bottleneck(nn.Module):
 
             conv2_planes_out, self.conv2 = make_oriented_map(
                 inplanes=planes,
-                kernel_size=7,
+                kernel_size=oriented_maps_bottleneck_kernel_size,
                 directions=9,
                 stride=1,
                 dstack_phases=True,
@@ -170,6 +171,7 @@ class ResNet(nn.Module):
         num_classes=10,
         # trainable_oriented_maps: bool = True,
         use_oriented_maps_v1: Union[str, None] = None,
+        oriented_maps_v1_kernel_size: int = 9,
         **kwargs
     ):
         """_summary_
@@ -186,7 +188,10 @@ class ResNet(nn.Module):
         if "power" in use_oriented_maps_v1:
 
             self.in_planes, self._conv1_real, self._conv1_imag = make_oriented_map(
-                inplanes=3, kernel_size=7, directions=9, stride=1
+                inplanes=3,
+                kernel_size=oriented_maps_v1_kernel_size,
+                directions=9,
+                stride=1,
             )
 
             self.conv1 = lambda x: self._conv1_real(x) ** 2 + self._conv1_imag(x) ** 2
@@ -194,7 +199,11 @@ class ResNet(nn.Module):
         elif "phase" in use_oriented_maps_v1:
 
             self.in_planes, self.conv1 = make_oriented_map(
-                inplanes=3, kernel_size=7, directions=9, stride=1, dstack_phases=True
+                inplanes=3,
+                kernel_size=oriented_maps_v1_kernel_size,
+                directions=9,
+                stride=1,
+                dstack_phases=True,
             )
 
         else:
