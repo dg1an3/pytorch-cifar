@@ -24,21 +24,21 @@ def make_test_image(N=20):
     return img
 
 
-def rgb_to_rgba_bytes(x):
+num_classes = 10
+cifar10_testset = CIFAR10(root="./data", train=False, download=True, transform=None)
+# print(f"{cifar10_testset.data[1].shape}")
+
+
+def rgb_to_uint32(x):
     # print(x.shape)
     rgba = bytearray(x.tobytes())
     rgba.append(255)
     return np.frombuffer(rgba, dtype=np.uint32)
 
 
-num_classes = 10
-cifar10_testset = CIFAR10(root="./data", train=False, download=True, transform=None)
-# print(f"{cifar10_testset.data[1].shape}")
-
-
 def get_cifar_images(N=10):
     rgba_images = [
-        np.apply_along_axis(rgb_to_rgba_bytes, -1, cifar10_testset.data[n])
+        np.apply_along_axis(rgb_to_uint32, -1, cifar10_testset.data[n])
         for n in range(N)
     ]
     rgba_images = map(np.flipud, rgba_images)
