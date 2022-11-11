@@ -14,10 +14,23 @@ import PIL
 
 import os
 import argparse
+import datetime
+import logging
 
 from models import *
 from utils import progress_bar
 
+train_start_time = datetime.datetime.now()
+train_chk_directory = f"./checkpoint/{train_start_time.strftime('%Y%m%d_%H%M')}/"
+if not os.path.exists(train_chk_directory):
+    os.makedirs(train_chk_directory)
+
+logging.basicConfig(
+    filename=f"{train_chk_directory}/log.txt",
+    format="%(asctime)s %(levelname)s %(message)s",  # " ".join([f"%({name})s" for name in ["asctime", "level", "message"]]),
+    level=logging.DEBUG,
+)
+logging.getLogger().addHandler(logging.StreamHandler())
 
 parser = argparse.ArgumentParser(description="PyTorch CIFAR10 Training")
 parser.add_argument("--lr", default=0.1, type=float, help="learning rate")
@@ -25,6 +38,7 @@ parser.add_argument(
     "--resume", "-r", action="store_true", help="resume from checkpoint"
 )
 args = parser.parse_args()
+
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 best_acc = 0  # best test accuracy
@@ -42,7 +56,7 @@ def convertColor(img):
 
 
 # Data
-print("==> Preparing data..")
+logging.info("==> Preparing data..")
 transform_train = transforms.Compose(
     [
         transforms.RandomCrop(32, padding=4),
@@ -62,12 +76,18 @@ transform_test = transforms.Compose(
 )
 
 num_classes = 10
-dataset_to_use = torchvision.datasets.CIFAR10 if num_classes == 10 else torchvision.datasets.CIFAR100
+dataset_to_use = (
+    torchvision.datasets.CIFAR10 if num_classes == 10 else torchvision.datasets.CIFAR100
+)
 
 trainset = dataset_to_use(
     root="./data", train=True, download=True, transform=transform_train
 )
+logging.info(trainset)
+len(f"length of trainset.classes = {len(trainset.classes)}")
+
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=256, shuffle=True)
+logging.info(f"trainloader.batch_size = {trainloader.batch_size}")
 
 
 def calculate_whiten():
@@ -91,22 +111,9 @@ def calculate_whiten():
 testset = dataset_to_use(
     root="./data", train=False, download=True, transform=transform_test
 )
-print(f"{testset.data.shape} test data shape")
+logging.info(f"{testset.data.shape} test data shape")
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=256, shuffle=False)
-
-# classes = (
-#     "plane",
-#     "car",
-#     "bird",
-#     "cat",
-#     "deer",
-#     "dog",
-#     "frog",
-#     "horse",
-#     "ship",
-#     "truck",
-# )
 
 # Model
 print("==> Building model..")
@@ -148,26 +155,32 @@ if device == "cuda":
 else:
     net = model
 
-
 model.train_oriented_maps(False)
 
-# check that the kernels are not trainable
-for p in model.parameters():
-    print(f"{p.requires_grad} {p.data.shape}")
+logging.info(str(model))
+
+criterion = nn.CrossEntropyLoss()
+logging.info(f"{str(criterion)}")
+
+optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+logging.info(f"{str(optimizer)}")
+
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+logging.info(f"{type(scheduler).__name__}:{scheduler.T_max} {scheduler.eta_min}")
 
 
-def plot_test_tsne(testloader:torch.utils.data.DataLoader):
-    with torch.no_grad():    
-        outputs = [
+def plot_test_tsne(testloader: torch.utils.data.DataLoader):
+    with torch.no_grad():
+        class_outputs = [
             net(inputs.to(device)).cpu().numpy()
             for _, (inputs, _) in enumerate(testloader)
         ]
-        outputs = np.concatenate(outputs)
+        class_outputs = np.concatenate(class_outputs)
 
     # create tsne projector
     tsne = TSNE(
         n_components=2,
-        perplexity=num_classes*2,
+        perplexity=num_classes * 2,
         early_exaggeration=1,
         metric="cosine",
         learning_rate="auto",
@@ -176,29 +189,25 @@ def plot_test_tsne(testloader:torch.utils.data.DataLoader):
         verbose=3,
     )
 
-    projected_outputs = tsne.fit_transform(outputs)
+    projected_outputs = tsne.fit_transform(class_outputs)
 
-    return projected_outputs
+    return (class_outputs, projected_outputs)
+
 
 # try out the plotting
-test_images = testset.data
-projected_outputs = plot_test_tsne(testloader)
-print(f"{projected_outputs.shape} {test_images.shape}")
+# test_images = testset.data
+# projected_outputs = plot_test_tsne(testloader)
+# print(f"{projected_outputs.shape} {test_images.shape}")
 
 
-
-if args.resume:
-    # Load checkpoint.
-    print("==> Resuming from checkpoint..")
-    assert os.path.isdir("checkpoint"), "Error: no checkpoint directory found!"
-    checkpoint = torch.load("./checkpoint/ckpt.pth")
-    net.load_state_dict(checkpoint["net"])
-    best_acc = checkpoint["acc"]
-    start_epoch = checkpoint["epoch"]
-
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+# if args.resume:
+#     # Load checkpoint.
+#     print("==> Resuming from checkpoint..")
+#     assert os.path.isdir("checkpoint"), "Error: no checkpoint directory found!"
+#     checkpoint = torch.load("./checkpoint/ckpt.pth")
+#     net.load_state_dict(checkpoint["net"])
+#     best_acc = checkpoint["acc"]
+#     start_epoch = checkpoint["epoch"]
 
 
 # Training
@@ -221,7 +230,7 @@ def train(epoch):
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
 
-        print(
+        logging.info(
             "Batch %d: Loss: %.3f | Acc: %.3f%% (%d/%d)"
             % (
                 batch_idx,
@@ -250,7 +259,7 @@ def test(epoch):
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
 
-            print(
+            logging.info(
                 "Test Batch %d: Loss: %.3f | Acc: %.3f%% (%d/%d)"
                 % (
                     batch_idx,
@@ -264,23 +273,30 @@ def test(epoch):
     # Save checkpoint.
     acc = 100.0 * correct / total
     if acc > best_acc:
-        print("Saving..")
+        logging.info("Saving..")
         state = {
             "net": net.state_dict(),
             "acc": acc,
             "epoch": epoch,
         }
-        if not os.path.isdir("checkpoint"):
-            os.mkdir("checkpoint")
-        torch.save(state, "./checkpoint/ckpt.pth")
+        torch.save(state, f"{train_chk_directory}/ckpt.pth")
         best_acc = acc
 
 
 for epoch in range(start_epoch, start_epoch + 100):
+
     train(epoch)
     test(epoch)
-    outputs = plot_test_tsne(testset)
-    print(f"{outputs.shape} shape")
+    
+    class_positions, projected_positions = plot_test_tsne(testloader)
+
+    logging.info(f"projected_positions {projected_positions.shape} shape")
+
+    np.save(f"{train_chk_directory}/{epoch:03d}-class.npy", class_positions)
+    logging.info(f"saved class positions to {epoch:03d}-class.npy")
+
+    np.save(f"{train_chk_directory}/{epoch:03d}-tsne.npy", projected_positions)
+    logging.info(f"saved tsne projection to {epoch:03d}-tsne.npy")
 
     scheduler.step()
 
