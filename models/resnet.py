@@ -164,6 +164,8 @@ class Bottleneck(nn.Module):
 
 
 class ResNet(nn.Module):
+    """ResNet modified to accomodate the Herringstack weights
+    """    
     def __init__(
         self,
         block,
