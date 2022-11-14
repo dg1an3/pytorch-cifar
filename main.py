@@ -11,6 +11,7 @@ import torchvision.transforms as transforms
 from sklearn.manifold import TSNE
 import cv2
 import PIL
+import pandas as pd
 
 import os
 import argparse
@@ -27,10 +28,12 @@ if not os.path.exists(train_chk_directory):
 
 logging.basicConfig(
     filename=f"{train_chk_directory}/log.txt",
-    format="%(asctime)s %(levelname)s %(message)s",  # " ".join([f"%({name})s" for name in ["asctime", "level", "message"]]),
+    format="%(asctime)s %(levelname)s %(message)s",
+    # datefmt="%Y-%m-%d %H:%M:%S",
     level=logging.DEBUG,
 )
 logging.getLogger().addHandler(logging.StreamHandler())
+logging.debug("train.py -- begin training")
 
 parser = argparse.ArgumentParser(description="PyTorch CIFAR10 Training")
 parser.add_argument("--lr", default=0.1, type=float, help="learning rate")
@@ -56,7 +59,6 @@ def convertColor(img):
 
 
 # Data
-logging.info("==> Preparing data..")
 transform_train = transforms.Compose(
     [
         transforms.RandomCrop(32, padding=4),
@@ -83,11 +85,13 @@ dataset_to_use = (
 trainset = dataset_to_use(
     root="./data", train=True, download=True, transform=transform_train
 )
-logging.info(trainset)
-len(f"length of trainset.classes = {len(trainset.classes)}")
+logging.info(f"constructing trainset {trainset}")
+logging.info(
+    f"constructing trainset: length of trainset.classes = {len(trainset.classes)}"
+)
 
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=256, shuffle=True)
-logging.info(f"trainloader.batch_size = {trainloader.batch_size}")
+logging.info(f"constructing trainloader batch_size = {trainloader.batch_size}")
 
 
 def calculate_whiten():
@@ -116,7 +120,6 @@ logging.info(f"{testset.data.shape} test data shape")
 testloader = torch.utils.data.DataLoader(testset, batch_size=256, shuffle=False)
 
 # Model
-print("==> Building model..")
 # model = VGG('VGG19')
 # model = ResNet18()
 # model = ResNet34()
@@ -157,16 +160,18 @@ else:
 
 model.train_oriented_maps(False)
 
-logging.info(str(model))
+logging.info(f"constructing ResNet50 {model}")
 
 criterion = nn.CrossEntropyLoss()
-logging.info(f"{str(criterion)}")
+logging.info(f"constructing loss function {criterion}")
 
 optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
-logging.info(f"{str(optimizer)}")
+logging.info(f"constructing optimizer {optimizer}")
 
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
-logging.info(f"{type(scheduler).__name__}:{scheduler.T_max} {scheduler.eta_min}")
+logging.info(
+    f"constructing scheduler {type(scheduler).__name__}:{scheduler.T_max} {scheduler.eta_min}"
+)
 
 
 def plot_test_tsne(testloader: torch.utils.data.DataLoader):
@@ -194,22 +199,6 @@ def plot_test_tsne(testloader: torch.utils.data.DataLoader):
     return (class_outputs, projected_outputs)
 
 
-# try out the plotting
-# test_images = testset.data
-# projected_outputs = plot_test_tsne(testloader)
-# print(f"{projected_outputs.shape} {test_images.shape}")
-
-
-# if args.resume:
-#     # Load checkpoint.
-#     print("==> Resuming from checkpoint..")
-#     assert os.path.isdir("checkpoint"), "Error: no checkpoint directory found!"
-#     checkpoint = torch.load("./checkpoint/ckpt.pth")
-#     net.load_state_dict(checkpoint["net"])
-#     best_acc = checkpoint["acc"]
-#     start_epoch = checkpoint["epoch"]
-
-
 # Training
 def train(epoch):
     print("\nEpoch: %d" % epoch)
@@ -230,15 +219,12 @@ def train(epoch):
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
 
-        logging.info(
-            "Batch %d: Loss: %.3f | Acc: %.3f%% (%d/%d)"
-            % (
-                batch_idx,
-                train_loss / (batch_idx + 1),
-                100.0 * correct / total,
-                correct,
-                total,
-            )
+        yield (
+            batch_idx,
+            train_loss / (batch_idx + 1),
+            100.0 * correct / total,
+            correct,
+            total,
         )
 
 
@@ -259,38 +245,64 @@ def test(epoch):
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
 
-            logging.info(
-                "Test Batch %d: Loss: %.3f | Acc: %.3f%% (%d/%d)"
-                % (
-                    batch_idx,
-                    test_loss / (batch_idx + 1),
-                    100.0 * correct / total,
-                    correct,
-                    total,
-                )
+            yield (
+                batch_idx,
+                test_loss / (batch_idx + 1),
+                100.0 * correct / total,
+                correct,
+                total,
             )
 
     # Save checkpoint.
     acc = 100.0 * correct / total
     if acc > best_acc:
-        logging.info("Saving..")
         state = {
             "net": net.state_dict(),
             "acc": acc,
             "epoch": epoch,
         }
         torch.save(state, f"{train_chk_directory}/ckpt.pth")
+        logging.info("saved model checkpoint")
         best_acc = acc
 
+def write_to_csv(phase, epoch, train_arr):
+    df = pd.DataFrame(train_arr, columns=["batch_idx", "loss", "accuracy", "correct", "total"])
+    df["epoch"] = epoch
+    df.to_csv(f"{phase}_epoch_{epoch:03d}.csv")
 
 for epoch in range(start_epoch, start_epoch + 100):
+    train_arr = train(epoch)
+    for batch_idx, loss, accuracy, correct, total in train_arr:
+        logging.info(
+            "train iteration|epoch: %d|batch: %d|loss: %.3f|accuracy: %.3f%% (%d/%d)"
+            % (
+                epoch,
+                batch_idx,
+                loss,
+                accuracy,
+                correct,
+                total,
+            )
+        )
+    write_to_csv(f"{train_chk_directory}/train", epoch, train_arr)
 
-    train(epoch)
-    test(epoch)
-    
+    test_arr = test(epoch)
+    for batch_idx, loss, accuracy, correct, total in test_arr:
+        logging.info(
+            "test iteration|epoch: %d|batch: %d|loss: %.3f|accuracy: %.3f%% (%d/%d)"
+            % (
+                epoch,
+                batch_idx,
+                loss,
+                accuracy,
+                correct,
+                total,
+            )
+        )
+    write_to_csv(f"{train_chk_directory}/test", epoch, test_arr)
+
     class_positions, projected_positions = plot_test_tsne(testloader)
-
-    logging.info(f"projected_positions {projected_positions.shape} shape")
+    logging.info(f"calculated projected_positions {projected_positions.shape} shape")
 
     np.save(f"{train_chk_directory}/{epoch:03d}-class.npy", class_positions)
     logging.info(f"saved class positions to {epoch:03d}-class.npy")

@@ -1,3 +1,68 @@
+import os
+from pathlib import Path
+import datetime
+
+
+def parse_log_entries(log_path):
+    lines, dttm = [], None
+    with open(log_path, "rt") as f:
+        for line in f.readlines():
+            try:
+                next_dttm = datetime.datetime.strptime(line[0:19], "%Y-%m-%d %H:%M:%S")
+                next_dttm = next_dttm + datetime.timedelta(
+                    milliseconds=int(line[20:23])
+                )
+
+                if dttm:
+                    yield (dttm, entry_type, lines)
+
+                # now add the current data
+                dttm = next_dttm
+                remainder = line[24:].split(" ")
+                entry_type, lines = remainder[0], [" ".join(remainder[1:]).strip("\n")]
+
+            except ValueError:
+                lines.append(line.strip("\n"))
+
+
+def scan_log_entries():
+    for log_path in sorted(Path("checkpoint").glob("*/log.txt")):
+        yield (log_path.parts[-2], parse_log_entries(log_path))
+
+
+def test_scan_entries():
+    for (folder, entries) in scan_log_entries():
+        print(folder)
+        for (dttm, entry_type, lines) in entries:
+            if len(lines) == 1:
+                print(f"\t{dttm} {entry_type} {lines[0]}")
+            else:
+                print(f"\t{dttm} {entry_type}")
+                for line in lines:
+                    print(f"\t\t{line}")
+
+
+def iteration_entry_to_dict(entry):
+    parts = list(entry.split("|"))
+    entry_dict = {}
+    entry_dict["epoch"] = parts[1].split(":")[1].trim(" ")
+    entry_dict["batch"] = parts[2].split(":")[1].trim(" ")
+    entry_dict["loss"] = parts[3].split(":")[1].trim(" ")
+    entry_dict["accuracy"] = parts[4].split(":")[1].trim(" ").split(" ")[0]
+    print(entry_dict)
+    return entry_dict
+
+
+def extract_training():
+    for (folder, entries) in scan_log_entries():
+        train_iterations = [
+            iteration_entry_to_dict(entry_lines[0])
+            for (_,_,entry_lines) in entries
+            if len(entry_lines) == 1 and entry_lines[0].startswith("train iteration")
+        ]        
+
+extract_training()
+
 import numpy as np
 
 import torch

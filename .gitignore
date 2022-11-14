@@ -1,3 +1,5 @@
 venv39/
 data/
 __pycache__/
+checkpoint/
+.vscode/
