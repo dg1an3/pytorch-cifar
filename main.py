@@ -163,6 +163,7 @@ model.train_oriented_maps(False)
 logging.info(f"constructing ResNet50 {model}")
 
 criterion = nn.CrossEntropyLoss()
+# criterion = nn.L1Loss()
 logging.info(f"constructing loss function {criterion}")
 
 optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
@@ -265,13 +266,14 @@ def test(epoch):
         logging.info("saved model checkpoint")
         best_acc = acc
 
-def write_to_csv(phase, epoch, train_arr):
+def write_to_csv(epoch, phase, train_arr):
     df = pd.DataFrame(train_arr, columns=["batch_idx", "loss", "accuracy", "correct", "total"])
     df["epoch"] = epoch
-    df.to_csv(f"{phase}_epoch_{epoch:03d}.csv")
+    df.to_csv(f"{train_chk_directory}/{epoch:03d}_{phase}.csv")
 
 for epoch in range(start_epoch, start_epoch + 100):
     train_arr = train(epoch)
+    train_arr = list(train_arr)
     for batch_idx, loss, accuracy, correct, total in train_arr:
         logging.info(
             "train iteration|epoch: %d|batch: %d|loss: %.3f|accuracy: %.3f%% (%d/%d)"
@@ -284,9 +286,10 @@ for epoch in range(start_epoch, start_epoch + 100):
                 total,
             )
         )
-    write_to_csv(f"{train_chk_directory}/train", epoch, train_arr)
+    write_to_csv(epoch, "train", train_arr)
 
     test_arr = test(epoch)
+    test_arr = list(test_arr)
     for batch_idx, loss, accuracy, correct, total in test_arr:
         logging.info(
             "test iteration|epoch: %d|batch: %d|loss: %.3f|accuracy: %.3f%% (%d/%d)"
@@ -299,7 +302,7 @@ for epoch in range(start_epoch, start_epoch + 100):
                 total,
             )
         )
-    write_to_csv(f"{train_chk_directory}/test", epoch, test_arr)
+    write_to_csv(epoch, "test", test_arr)
 
     class_positions, projected_positions = plot_test_tsne(testloader)
     logging.info(f"calculated projected_positions {projected_positions.shape} shape")
