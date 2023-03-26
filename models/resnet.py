@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.filter_utils import make_oriented_map
+from .filter_utils import make_oriented_map
 
 
 class BasicBlock(nn.Module):
